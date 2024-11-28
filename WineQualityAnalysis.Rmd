@@ -1,0 +1,236 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Load Required Libraries
+
+```{r}
+library(dplyr)
+library(MASS)
+library(naniar) 
+library(ROCR) 
+library(rpart)
+library(knitr)
+library(tibble)
+library(caret)
+library(gridExtra)
+library(car)
+library(tseries)
+library(lmtest)
+library(nortest)
+```
+# Data Analysis
+
+## Load and Shuffle the Data
+
+```{r}
+set.seed(12345) 
+data <- read.csv("WineQT.csv")
+data <- dplyr::select(data, -"Id")  
+data <- data[sample(nrow(data)), ]  
+```
+
+## Summarize the Dataset
+
+```{r}
+summary(data)
+```
+
+```{r}
+GGally::ggcorr(
+  data, 
+  method = c("complete", "pearson"), 
+  label = TRUE, 
+  geom = "tile", 
+  label_round = 3, 
+  label_size = 2, 
+  legend.size = 6, 
+  size = 1.5, 
+  hjust = 0.75
+)
+```
+
+# Basic Model Building
+
+## Initial Model
+
+```{r}
+model1<-lm(quality~.,data=data)
+summary(model1)
+```
+
+## Iterative Feature Selection
+The model is refined step by step by removing predictors one at a time.
+
+```{r}
+model1<-lm(quality~.-density,data=data)
+summary(model1)
+```
+
+```{r}
+model1<-lm(quality~.-density-fixed.acidity,data=data)
+summary(model1)
+```
+```{r}
+model1<-lm(quality~.-density-fixed.acidity-residual.sugar,data=data)
+summary(model1)
+```
+```{r}
+model1<-lm(quality~.-density-fixed.acidity-residual.sugar-citric.acid,data=data)
+summary(model1)
+```
+```{r}
+model1<-lm(quality~.-density-fixed.acidity-residual.sugar-citric.acid-free.sulfur.dioxide,data=data)
+summary(model1)
+```
+
+
+```{r}
+model1<-lm(quality~volatile.acidity+total.sulfur.dioxide+pH+sulphates+alcohol+chlorides:sulphates+chlorides,data=data)
+summary(model1)
+```
+## Normality of Residuals
+
+### Normality Tests
+
+```{r}
+jarque.bera.test(model1$residuals)
+```
+```{r}
+lillie.test(model1$residuals)
+```
+```{r}
+ad.test(model1$residuals)
+```
+
+We can see issues with residuals normality, however when analysing the histogram: 
+
+```{r}
+hist(model1$residuals, freq=FALSE,breaks=20)
+lines(seq(from = min(model1$residuals), to = max(model1$residuals),by=0.01),dnorm(seq(from = min(model1$residuals), to = max(model1$residuals),by=0.01),sd=sd(model1$residuals)))
+```
+```{r}
+mean(model1$residuals)
+```
+
+We can see it resembles normal distribution. Moreover, let's point out we are dealing with some outliers in the training set.
+
+```{r}
+plot(model1,which=4)
+```
+
+We will get rid of them to validate, whether our model isn't affected by them.
+
+# Model without outliers
+
+```{r}
+remove_high_leverage <- function(model, threshold = 4/(nrow(model$model) - length(model$coefficients))) {
+
+  cooks_distance <- cooks.distance(model)
+
+  high_leverage_indices <- which(cooks_distance > threshold)
+
+  cleaned_data <- model$model[-high_leverage_indices, , drop = FALSE]
+  
+  cleaned_model <- update(model, data = cleaned_data)
+  
+  return(list(model = cleaned_model,data=cleaned_data))
+}
+
+model1_nolev <- remove_high_leverage(model1)$model
+cleaned_data <- remove_high_leverage(model1)$data
+```
+
+```{r}
+summary(model1_nolev)
+```
+## Normality of Residuals After Removal
+```{r}
+jarque.bera.test(model1_nolev$residuals)
+```
+
+As we can see after removing outliers we can confirm with 5% level of significance that residuals of our model have normal distribution.
+
+
+## Homoskedasticity Tests
+
+```{r}
+ncvTest(model1_nolev)
+```
+```{r}
+gqtest(model1_nolev)
+```
+```{r}
+hmctest(model1_nolev)
+```
+## Autocorrelation Tests
+```{r}
+bgtest(model1_nolev)
+```
+```{r}
+dwtest(model1_nolev)
+```
+## Graphical Analysis
+
+```{r}
+plot(model1_nolev)
+```
+```{r}
+qqPlot(model1_nolev)
+```
+
+# Box-Cox Transformation
+
+```{r}
+lambda <- MASS::boxcox(model1_nolev)$x[which.max(MASS::boxcox(model1_nolev)$y)]
+```
+
+
+```{r}
+cleaned_data$trans_quality <- log(cleaned_data$quality)
+
+model2 <- lm(trans_quality~volatile.acidity+total.sulfur.dioxide+pH+sulphates+alcohol+chlorides:sulphates+chlorides,data=cleaned_data)
+```
+
+```{r}
+summary(model2)
+```
+
+```{r}
+hist(model2$residuals,freq=FALSE)
+lines(seq(from=min(model2$residuals),to=max(model2$residuals),by=0.01),dnorm(seq(from=min(model2$residuals),to=max(model2$residuals),by=0.01),sd=sd(model2$residuals)))
+```
+
+## Normality Tests for Transformed Model
+```{r}
+jarque.bera.test(model2$residuals)
+```
+```{r}
+qqPlot(model2)
+```
+
+
+## Homoskedasticity Tests
+
+```{r}
+ncvTest(model2)
+```
+
+```{r}
+gqtest(model2)
+```
+```{r}
+hmctest(model2)
+```
+
+## Autocorrelation Tests
+```{r}
+bgtest(model2)
+```
+```{r}
+dwtest(model2)
+```
+
+
+
